@@ -57,6 +57,18 @@ class Pricing(Base):
     date = Column(DateTime, index=True)  # Date + Hour
     price_per_kwh = Column(Float)        # Price in currency per kWh
 
+class EVChargingSession(Base):
+    __tablename__ = "ev_charging_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    start_time = Column(DateTime, default=datetime.utcnow)
+    end_time = Column(DateTime, nullable=True)
+    energy_kwh = Column(Float, nullable=False)
+    cost = Column(Float, nullable=True)  # Optional: store calculated cost
+
+    owner = relationship("User")
+
 
 Base.metadata.create_all(bind=engine)
 
@@ -97,6 +109,11 @@ class PricingCreate(BaseModel):
     date: datetime
     price_per_kwh: float
 
+class EVChargingCreate(BaseModel):
+    user_id: int
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    energy_kwh: float
 
 # ---------------------------
 # Routes
@@ -294,4 +311,57 @@ def calculate_bill(user_id: int, start: date, end: date, db: Session = Depends(g
         "total_kwh": total_kwh,
         "total_cost": total_cost
     }
+
+# ---------------------------
+# EV Charging Endpoints
+# ---------------------------
+@app.post("/ev-charging/")
+def create_ev_charging_session(session: EVChargingCreate, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == session.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Assume price per kWh is 0.25 (can be changed later)
+    price_per_kwh = 0.25
+    cost = round(session.energy_kwh * price_per_kwh, 2)
+
+    new_session = EVChargingSession(
+        user_id=session.user_id,
+        start_time=session.start_time or datetime.utcnow(),
+        end_time=session.end_time,
+        energy_kwh=session.energy_kwh,
+        cost=cost
+    )
+
+    db.add(new_session)
+    db.commit()
+    db.refresh(new_session)
+
+    return {
+        "id": new_session.id,
+        "user_id": new_session.user_id,
+        "start_time": new_session.start_time,
+        "end_time": new_session.end_time,
+        "energy_kwh": new_session.energy_kwh,
+        "cost": new_session.cost
+    }
+
+
+@app.get("/ev-charging/{user_id}")
+def get_ev_charging_sessions(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    sessions = db.query(EVChargingSession).filter(EVChargingSession.user_id == user_id).all()
+    return [
+        {
+            "id": s.id,
+            "start_time": s.start_time,
+            "end_time": s.end_time,
+            "energy_kwh": s.energy_kwh,
+            "cost": s.cost
+        }
+        for s in sessions
+    ]
 
