@@ -50,6 +50,13 @@ class SmartMeterReading(Base):
 
     meter = relationship("SmartMeter", back_populates="readings")
 
+class Pricing(Base):
+    __tablename__ = "pricing"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(DateTime, index=True)  # Date + Hour
+    price_per_kwh = Column(Float)        # Price in currency per kWh
+
 
 Base.metadata.create_all(bind=engine)
 
@@ -85,6 +92,10 @@ class ReadingCreate(BaseModel):
     meter_id: int
     energy_kwh: float
     timestamp: Optional[datetime] = None  # Optional custom timestamp
+
+class PricingCreate(BaseModel):
+    date: datetime
+    price_per_kwh: float
 
 
 # ---------------------------
@@ -133,7 +144,7 @@ def get_user_smart_meters(user_id: int, db: Session = Depends(get_db)):
     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
     return meters
 
-@app.post("/readings/")
+# @app.post("/readings/")
 # def create_reading(reading: SmartMeterReadingCreate, db: Session = Depends(get_db)):
 #     meter = db.query(SmartMeter).filter(SmartMeter.id == reading.meter_id).first()
 #     if not meter:
@@ -226,5 +237,61 @@ def get_monthly_energy(meter_id: int, db: Session = Depends(get_db)):
         "meter_id": meter_id,
         "month": today.strftime("%Y-%m"),
         "total_kwh": total_kwh or 0
+    }
+
+
+
+@app.post("/pricing/")
+def set_pricing(pricing: PricingCreate, db: Session = Depends(get_db)):
+    existing_rate = db.query(Pricing).filter(Pricing.date == pricing.date).first()
+
+    if existing_rate:
+        existing_rate.price_per_kwh = pricing.price_per_kwh
+        db.commit()
+        db.refresh(existing_rate)
+        return {"message": "Rate updated", "id": existing_rate.id, "price_per_kwh": existing_rate.price_per_kwh}
+
+    new_rate = Pricing(date=pricing.date, price_per_kwh=pricing.price_per_kwh)
+    db.add(new_rate)
+    db.commit()
+    db.refresh(new_rate)
+    return {"message": "Rate added", "id": new_rate.id, "price_per_kwh": new_rate.price_per_kwh}
+
+
+@app.get("/billing/{user_id}")
+def calculate_bill(user_id: int, start: date, end: date, db: Session = Depends(get_db)):
+    # Get all user's meters
+    meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
+    if not meters:
+        raise HTTPException(status_code=404, detail="No smart meters found for this user")
+
+    meter_ids = [m.id for m in meters]
+
+    # Get all readings in the date range
+    readings = db.query(SmartMeterReading).filter(
+        SmartMeterReading.meter_id.in_(meter_ids),
+        SmartMeterReading.timestamp >= start,
+        SmartMeterReading.timestamp <= end
+    ).all()
+
+    if not readings:
+        return {"user_id": user_id, "total_kwh": 0, "total_cost": 0}
+
+    total_kwh = 0
+    total_cost = 0
+
+    for reading in readings:
+        # Find the pricing for the exact hour of this reading
+        rate = db.query(Pricing).filter(Pricing.date == reading.timestamp.replace(minute=0, second=0, microsecond=0)).first()
+        price = rate.price_per_kwh if rate else 0
+        total_kwh += reading.energy_kwh
+        total_cost += reading.energy_kwh * price
+
+    return {
+        "user_id": user_id,
+        "start_date": start,
+        "end_date": end,
+        "total_kwh": total_kwh,
+        "total_cost": total_cost
     }
 
