@@ -365,3 +365,30 @@ def get_ev_charging_sessions(user_id: int, db: Session = Depends(get_db)):
         for s in sessions
     ]
 
+@app.get("/ev-charging/{user_id}/monthly-summary")
+def get_monthly_ev_summary(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    today = date.today()
+    first_of_month = date(today.year, today.month, 1)
+
+    total_energy = db.query(func.sum(EVChargingSession.energy_kwh)).filter(
+        EVChargingSession.user_id == user_id,
+        EVChargingSession.start_time >= first_of_month,
+        EVChargingSession.start_time <= today
+    ).scalar() or 0
+
+    total_cost = db.query(func.sum(EVChargingSession.cost)).filter(
+        EVChargingSession.user_id == user_id,
+        EVChargingSession.start_time >= first_of_month,
+        EVChargingSession.start_time <= today
+    ).scalar() or 0
+
+    return {
+        "user_id": user_id,
+        "month": today.strftime("%Y-%m"),
+        "total_energy_kwh": round(total_energy, 2),
+        "total_cost": round(total_cost, 2)
+    }
