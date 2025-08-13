@@ -365,6 +365,7 @@ def get_ev_charging_sessions(user_id: int, db: Session = Depends(get_db)):
         for s in sessions
     ]
 
+
 @app.get("/ev-charging/{user_id}/monthly-summary")
 def get_monthly_ev_summary(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
@@ -372,19 +373,29 @@ def get_monthly_ev_summary(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
 
     today = date.today()
-    first_of_month = date(today.year, today.month, 1)
+    # Start of month
+    first_of_month = datetime(today.year, today.month, 1)
+    # Start of next month
+    if today.month == 12:
+        first_of_next_month = datetime(today.year + 1, 1, 1)
+    else:
+        first_of_next_month = datetime(today.year, today.month + 1, 1)
 
-    total_energy = db.query(func.sum(EVChargingSession.energy_kwh)).filter(
+    sessions = db.query(EVChargingSession).filter(
         EVChargingSession.user_id == user_id,
         EVChargingSession.start_time >= first_of_month,
-        EVChargingSession.start_time <= today
-    ).scalar() or 0
+        EVChargingSession.start_time < first_of_next_month
+    ).all()
 
-    total_cost = db.query(func.sum(EVChargingSession.cost)).filter(
-        EVChargingSession.user_id == user_id,
-        EVChargingSession.start_time >= first_of_month,
-        EVChargingSession.start_time <= today
-    ).scalar() or 0
+    total_energy = 0
+    total_cost = 0
+
+    now = datetime.utcnow()
+    for s in sessions:
+        # Use end_time or now if session is ongoing
+        end_time = s.end_time or now
+        total_energy += s.energy_kwh
+        total_cost += s.cost
 
     return {
         "user_id": user_id,
