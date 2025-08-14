@@ -138,6 +138,10 @@ class BillingBreakdown(BaseModel):
 def read_root():
     return {"message": "Hello from GreenVolt API"}
 
+# ---------------------------
+# User Management - Read/Update/Delete
+# ---------------------------
+
 @app.post("/users/")
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.email == user.email).first()
@@ -150,6 +154,54 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
 
     return {"id": new_user.id, "name": new_user.name, "email": new_user.email}
+
+
+@app.get("/users/{user_id}")
+def get_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email
+    }
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
+
+@app.put("/users/{user_id}")
+def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user_update.name:
+        user.name = user_update.name
+    if user_update.email:
+        existing_email = db.query(User).filter(User.email == user_update.email, User.id != user_id).first()
+        if existing_email:
+            raise HTTPException(status_code=400, detail="Email already in use")
+        user.email = user_update.email
+    if user_update.password:
+        user.password = user_update.password
+
+    db.commit()
+    db.refresh(user)
+    return {"message": "User updated", "user": {"id": user.id, "name": user.name, "email": user.email}}
+
+@app.delete("/users/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    db.delete(user)
+    db.commit()
+    return {"message": f"User {user_id} deleted successfully"}
+
 
 @app.post("/smartmeters/")
 def create_smart_meter(smart_meter: SmartMeterCreate, db: Session = Depends(get_db)):
