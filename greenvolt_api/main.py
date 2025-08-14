@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session, declarative_base, sessionmaker, relationship
 from sqlalchemy import create_engine
 from datetime import datetime, date, timedelta
 from typing import Optional
+from typing import List
+
 
 
 # Database setup
@@ -70,6 +72,18 @@ class EVChargingSession(Base):
     owner = relationship("User")
 
 
+class SmartMeterData(Base):
+    __tablename__ = "smart_meter_data"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    consumption_kwh = Column(Float)
+
+    user = relationship("User")
+
+
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
@@ -130,6 +144,15 @@ class BillingBreakdown(BaseModel):
     total_cost: float
     missing_rate_hours: int
     items: list[BillingLineItem]
+
+class SmartMeterDataCreate(BaseModel):
+    user_id: int
+    timestamp: datetime
+    consumption_kwh: float
+
+class BulkPricingCreate(BaseModel):
+    date: datetime  # The exact hour
+    price_per_kwh: float
 
 # ---------------------------
 # Routes
@@ -525,53 +548,238 @@ def get_monthly_ev_summary(user_id: int, db: Session = Depends(get_db)):
 
 
 
-@app.get("/billing/{user_id}/breakdown", response_model=BillingBreakdown)
-def billing_breakdown(
-    user_id: int,
-    start: datetime = Query(..., description="ISO timestamp, e.g. 2025-08-13T00:00:00"),
-    end: datetime = Query(..., description="ISO timestamp, e.g. 2025-08-14T00:00:00"),
-    db: Session = Depends(get_db),
-):
+# @app.get("/billing/{user_id}/breakdown", response_model=BillingBreakdown)
+# def billing_breakdown(
+#     user_id: int,
+#     start: datetime = Query(..., description="ISO timestamp, e.g. 2025-08-13T00:00:00"),
+#     end: datetime = Query(..., description="ISO timestamp, e.g. 2025-08-14T00:00:00"),
+#     db: Session = Depends(get_db),
+# ):
+#     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
+#     if not meters:
+#         raise HTTPException(status_code=404, detail="No smart meters found for this user")
+#
+#     meter_ids = [m.id for m in meters]
+#
+#     readings = db.query(SmartMeterReading).filter(
+#         SmartMeterReading.meter_id.in_(meter_ids),
+#         SmartMeterReading.timestamp >= start,
+#         SmartMeterReading.timestamp < end
+#     ).order_by(SmartMeterReading.timestamp.asc()).all()
+#
+#     items: list[BillingLineItem] = []
+#     total_kwh = 0.0
+#     total_cost = 0.0
+#     missing_rate_hours = 0
+#
+#     for r in readings:
+#         hour_ts = hour_floor(r.timestamp)
+#         price = get_rate_for_hour(db, hour_ts)
+#         if price == 0.0:
+#             missing_rate_hours += 1
+#         cost = round(r.energy_kwh * price, 6)
+#         total_kwh += r.energy_kwh
+#         total_cost += cost
+#         items.append(BillingLineItem(
+#             meter_id=r.meter_id,
+#             timestamp=hour_ts,
+#             energy_kwh=r.energy_kwh,
+#             price_per_kwh=price,
+#             cost=cost
+#         ))
+#
+#     return BillingBreakdown(
+#         user_id=user_id,
+#         start=start,
+#         end=end,
+#         total_kwh=round(total_kwh, 6),
+#         total_cost=round(total_cost, 6),
+#         missing_rate_hours=missing_rate_hours,
+#         items=items
+#     )
+
+@app.post("/smartmeters/data")
+def upload_smart_meter_data(data: SmartMeterDataCreate, db: Session = Depends(get_db)):
+    # Check user exists
+    user = db.query(User).filter(User.id == data.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Create new record
+    new_record = SmartMeterData(
+        user_id=data.user_id,
+        timestamp=data.timestamp,
+        consumption_kwh=data.consumption_kwh
+    )
+    db.add(new_record)
+    db.commit()
+    db.refresh(new_record)
+
+    return {
+        "id": new_record.id,
+        "user_id": new_record.user_id,
+        "timestamp": new_record.timestamp,
+        "consumption_kwh": new_record.consumption_kwh
+    }
+
+
+@app.get("/smartmeters/{user_id}/consumption")
+def get_smart_meter_consumption(user_id: int, start_date: str, end_date: str, db: Session = Depends(get_db)):
+    """
+    Retrieve smart meter consumption data for a user within a date range.
+    start_date and end_date format: YYYY-MM-DD
+    """
+    # Validate dates
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
+    # Check user exists
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Fetch data
+    records = db.query(SmartMeterData).filter(
+        SmartMeterData.user_id == user_id,
+        SmartMeterData.timestamp >= start_dt,
+        SmartMeterData.timestamp <= end_dt
+    ).all()
+
+    return {
+        "user_id": user_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        "records": [
+            {"timestamp": r.timestamp, "consumption_kwh": r.consumption_kwh}
+            for r in records
+        ]
+    }
+
+@app.post("/pricing/bulk/")
+def bulk_pricing_upload(prices: List[BulkPricingCreate], db: Session = Depends(get_db)):
+    if not prices:
+        raise HTTPException(status_code=400, detail="Empty pricing list")
+
+    results = []
+    for p in prices:
+        existing = db.query(Pricing).filter(Pricing.date == p.date).first()
+        if existing:
+            existing.price_per_kwh = p.price_per_kwh
+            db.commit()
+            db.refresh(existing)
+            results.append({"id": existing.id, "date": existing.date, "price_per_kwh": existing.price_per_kwh, "status": "updated"})
+        else:
+            new_rate = Pricing(date=p.date, price_per_kwh=p.price_per_kwh)
+            db.add(new_rate)
+            db.commit()
+            db.refresh(new_rate)
+            results.append({"id": new_rate.id, "date": new_rate.date, "price_per_kwh": new_rate.price_per_kwh, "status": "added"})
+
+    return {"uploaded_count": len(results), "details": results}
+
+@app.get("/billing/{user_id}")
+def calculate_bill(user_id: int, start: datetime, end: datetime, db: Session = Depends(get_db)):
+    # Get all user's meters
     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
     if not meters:
         raise HTTPException(status_code=404, detail="No smart meters found for this user")
 
     meter_ids = [m.id for m in meters]
 
+    # Get all readings in the date range
     readings = db.query(SmartMeterReading).filter(
         SmartMeterReading.meter_id.in_(meter_ids),
         SmartMeterReading.timestamp >= start,
-        SmartMeterReading.timestamp < end
-    ).order_by(SmartMeterReading.timestamp.asc()).all()
+        SmartMeterReading.timestamp <= end
+    ).all()
 
-    items: list[BillingLineItem] = []
-    total_kwh = 0.0
-    total_cost = 0.0
-    missing_rate_hours = 0
+    if not readings:
+        return {"user_id": user_id, "total_kwh": 0, "total_cost": 0}
 
-    for r in readings:
-        hour_ts = hour_floor(r.timestamp)
-        price = get_rate_for_hour(db, hour_ts)
-        if price == 0.0:
-            missing_rate_hours += 1
-        cost = round(r.energy_kwh * price, 6)
-        total_kwh += r.energy_kwh
+    total_kwh = 0
+    total_cost = 0
+
+    for reading in readings:
+        # Round timestamp to the hour to match pricing
+        hour_timestamp = reading.timestamp.replace(minute=0, second=0, microsecond=0)
+        rate = db.query(Pricing).filter(Pricing.date == hour_timestamp).first()
+        price = rate.price_per_kwh if rate else 0  # fallback to 0 if no pricing set
+
+        total_kwh += reading.energy_kwh
+        total_cost += reading.energy_kwh * price
+
+    return {
+        "user_id": user_id,
+        "start_date": start,
+        "end_date": end,
+        "total_kwh": round(total_kwh, 2),
+        "total_cost": round(total_cost, 2)
+    }
+
+
+@app.get("/billing/{user_id}/detailed_hourly")
+def calculate_hourly_bill(user_id: int, start: date, end: date, db: Session = Depends(get_db)):
+    # Get all user's meters
+    meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
+    if not meters:
+        raise HTTPException(status_code=404, detail="No smart meters found for this user")
+
+    meter_ids = [m.id for m in meters]
+
+    # Get all readings in the date range
+    readings = db.query(SmartMeterReading).filter(
+        SmartMeterReading.meter_id.in_(meter_ids),
+        SmartMeterReading.timestamp >= start,
+        SmartMeterReading.timestamp <= end
+    ).all()
+
+    if not readings:
+        return {"user_id": user_id, "total_kwh": 0, "total_cost": 0, "daily_breakdown": [], "hourly_breakdown": []}
+
+    daily_breakdown = {}
+    hourly_breakdown = []
+    total_kwh = 0
+    total_cost = 0
+
+    for reading in readings:
+        # Hourly cost
+        rate = db.query(Pricing).filter(
+            Pricing.date == reading.timestamp.replace(minute=0, second=0, microsecond=0)
+        ).first()
+        price = rate.price_per_kwh if rate else 0
+        cost = reading.energy_kwh * price
+
+        total_kwh += reading.energy_kwh
         total_cost += cost
-        items.append(BillingLineItem(
-            meter_id=r.meter_id,
-            timestamp=hour_ts,
-            energy_kwh=r.energy_kwh,
-            price_per_kwh=price,
-            cost=cost
-        ))
 
-    return BillingBreakdown(
-        user_id=user_id,
-        start=start,
-        end=end,
-        total_kwh=round(total_kwh, 6),
-        total_cost=round(total_cost, 6),
-        missing_rate_hours=missing_rate_hours,
-        items=items
-    )
+        # Daily aggregation
+        day_str = reading.timestamp.date().isoformat()
+        if day_str not in daily_breakdown:
+            daily_breakdown[day_str] = {"kwh": 0, "cost": 0}
+        daily_breakdown[day_str]["kwh"] += reading.energy_kwh
+        daily_breakdown[day_str]["cost"] += cost
+
+        # Hourly entry
+        hourly_breakdown.append({
+            "timestamp": reading.timestamp.isoformat(),
+            "kwh": reading.energy_kwh,
+            "cost": round(cost, 2)
+        })
+
+    # Convert daily breakdown to a sorted list
+    daily_breakdown_list = [{"date": k, "kwh": v["kwh"], "cost": round(v["cost"], 2)}
+                            for k, v in sorted(daily_breakdown.items())]
+
+    return {
+        "user_id": user_id,
+        "start_date": start,
+        "end_date": end,
+        "total_kwh": total_kwh,
+        "total_cost": round(total_cost, 2),
+        "daily_breakdown": daily_breakdown_list,
+        "hourly_breakdown": hourly_breakdown
+    }
 
