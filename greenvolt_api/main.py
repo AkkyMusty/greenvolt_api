@@ -1,9 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, func
 from sqlalchemy.orm import Session, declarative_base, sessionmaker, relationship
 from sqlalchemy import create_engine
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
 
 
@@ -115,6 +115,22 @@ class EVChargingCreate(BaseModel):
     end_time: Optional[datetime] = None
     energy_kwh: float
 
+class BillingLineItem(BaseModel):
+    meter_id: int
+    timestamp: datetime
+    energy_kwh: float
+    price_per_kwh: float
+    cost: float
+
+class BillingBreakdown(BaseModel):
+    user_id: int
+    start: datetime
+    end: datetime
+    total_kwh: float
+    total_cost: float
+    missing_rate_hours: int
+    items: list[BillingLineItem]
+
 # ---------------------------
 # Routes
 # ---------------------------
@@ -161,26 +177,7 @@ def get_user_smart_meters(user_id: int, db: Session = Depends(get_db)):
     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
     return meters
 
-# @app.post("/readings/")
-# def create_reading(reading: SmartMeterReadingCreate, db: Session = Depends(get_db)):
-#     meter = db.query(SmartMeter).filter(SmartMeter.id == reading.meter_id).first()
-#     if not meter:
-#         raise HTTPException(status_code=404, detail="Smart meter not found")
-#
-#     new_reading = SmartMeterReading(
-#         meter_id=reading.meter_id,
-#         energy_kwh=reading.energy_kwh
-#     )
-#     db.add(new_reading)
-#     db.commit()
-#     db.refresh(new_reading)
-#
-#     return {
-#         "id": new_reading.id,
-#         "meter_id": new_reading.meter_id,
-#         "timestamp": new_reading.timestamp,
-#         "energy_kwh": new_reading.energy_kwh
-#     }
+
 @app.post("/readings/")
 def create_reading(reading: ReadingCreate, db: Session = Depends(get_db)):
     meter = db.query(SmartMeter).filter(SmartMeter.id == reading.meter_id).first()
@@ -312,25 +309,93 @@ def calculate_bill(user_id: int, start: date, end: date, db: Session = Depends(g
         "total_cost": total_cost
     }
 
+def hour_floor(dt: datetime) -> datetime:
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+def get_rate_for_hour(db: Session, dt: datetime) -> float:
+    """Return price for the hour starting at dt (floored to the hour). Missing rate -> 0."""
+    hour = hour_floor(dt)
+    rate = db.query(Pricing).filter(Pricing.date == hour).first()
+    return rate.price_per_kwh if rate else 0.0
+
+
 # ---------------------------
 # EV Charging Endpoints
 # ---------------------------
+# @app.post("/ev-charging/")
+# def create_ev_charging_session(session: EVChargingCreate, db: Session = Depends(get_db)):
+#     user = db.query(User).filter(User.id == session.user_id).first()
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#
+#     # Assume price per kWh is 0.25 (can be changed later)
+#     price_per_kwh = 0.25
+#     cost = round(session.energy_kwh * price_per_kwh, 2)
+#
+#     new_session = EVChargingSession(
+#         user_id=session.user_id,
+#         start_time=session.start_time or datetime.utcnow(),
+#         end_time=session.end_time,
+#         energy_kwh=session.energy_kwh,
+#         cost=cost
+#     )
+#
+#     db.add(new_session)
+#     db.commit()
+#     db.refresh(new_session)
+#
+#     return {
+#         "id": new_session.id,
+#         "user_id": new_session.user_id,
+#         "start_time": new_session.start_time,
+#         "end_time": new_session.end_time,
+#         "energy_kwh": new_session.energy_kwh,
+#         "cost": new_session.cost
+#     }
+
 @app.post("/ev-charging/")
 def create_ev_charging_session(session: EVChargingCreate, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == session.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Assume price per kWh is 0.25 (can be changed later)
-    price_per_kwh = 0.25
-    cost = round(session.energy_kwh * price_per_kwh, 2)
+    start_time = session.start_time or datetime.utcnow()
+    # If no end_time, assume 1-hour session for pricing; you can change this rule if you prefer.
+    end_time = session.end_time or (start_time + timedelta(hours=1))
+    if end_time <= start_time:
+        raise HTTPException(status_code=400, detail="end_time must be after start_time")
+
+    # Distribute energy evenly over the session duration across hour buckets
+    duration_sec = (end_time - start_time).total_seconds()
+    energy_total = session.energy_kwh
+    cost_total = 0.0
+
+    # Iterate hour by hour over the interval
+    cursor = hour_floor(start_time)
+    # Ensure cursor starts at the beginning of the hour that includes start_time
+    if cursor < start_time:
+        cursor = cursor
+    else:
+        cursor = hour_floor(start_time)
+
+    while cursor < end_time:
+        next_hour = cursor + timedelta(hours=1)
+        # Portion of the session overlapping this hour
+        seg_start = max(cursor, start_time)
+        seg_end = min(next_hour, end_time)
+        seg_sec = max(0.0, (seg_end - seg_start).total_seconds())
+        if seg_sec > 0 and duration_sec > 0:
+            seg_energy = energy_total * (seg_sec / duration_sec)
+            price = get_rate_for_hour(db, cursor)  # price for this hour
+            cost_total += seg_energy * price
+        cursor = next_hour
 
     new_session = EVChargingSession(
         user_id=session.user_id,
-        start_time=session.start_time or datetime.utcnow(),
-        end_time=session.end_time,
-        energy_kwh=session.energy_kwh,
-        cost=cost
+        start_time=start_time,
+        end_time=session.end_time,  # keep None if not provided
+        energy_kwh=energy_total,
+        cost=round(cost_total, 6)
     )
 
     db.add(new_session)
@@ -364,6 +429,8 @@ def get_ev_charging_sessions(user_id: int, db: Session = Depends(get_db)):
         }
         for s in sessions
     ]
+
+
 
 
 @app.get("/ev-charging/{user_id}/monthly-summary")
@@ -403,3 +470,56 @@ def get_monthly_ev_summary(user_id: int, db: Session = Depends(get_db)):
         "total_energy_kwh": round(total_energy, 2),
         "total_cost": round(total_cost, 2)
     }
+
+
+
+@app.get("/billing/{user_id}/breakdown", response_model=BillingBreakdown)
+def billing_breakdown(
+    user_id: int,
+    start: datetime = Query(..., description="ISO timestamp, e.g. 2025-08-13T00:00:00"),
+    end: datetime = Query(..., description="ISO timestamp, e.g. 2025-08-14T00:00:00"),
+    db: Session = Depends(get_db),
+):
+    meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
+    if not meters:
+        raise HTTPException(status_code=404, detail="No smart meters found for this user")
+
+    meter_ids = [m.id for m in meters]
+
+    readings = db.query(SmartMeterReading).filter(
+        SmartMeterReading.meter_id.in_(meter_ids),
+        SmartMeterReading.timestamp >= start,
+        SmartMeterReading.timestamp < end
+    ).order_by(SmartMeterReading.timestamp.asc()).all()
+
+    items: list[BillingLineItem] = []
+    total_kwh = 0.0
+    total_cost = 0.0
+    missing_rate_hours = 0
+
+    for r in readings:
+        hour_ts = hour_floor(r.timestamp)
+        price = get_rate_for_hour(db, hour_ts)
+        if price == 0.0:
+            missing_rate_hours += 1
+        cost = round(r.energy_kwh * price, 6)
+        total_kwh += r.energy_kwh
+        total_cost += cost
+        items.append(BillingLineItem(
+            meter_id=r.meter_id,
+            timestamp=hour_ts,
+            energy_kwh=r.energy_kwh,
+            price_per_kwh=price,
+            cost=cost
+        ))
+
+    return BillingBreakdown(
+        user_id=user_id,
+        start=start,
+        end=end,
+        total_kwh=round(total_kwh, 6),
+        total_cost=round(total_cost, 6),
+        missing_rate_hours=missing_rate_hours,
+        items=items
+    )
+
