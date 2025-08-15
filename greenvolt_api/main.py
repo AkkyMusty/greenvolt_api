@@ -680,8 +680,53 @@ def bulk_pricing_upload(prices: List[BulkPricingCreate], db: Session = Depends(g
 
     return {"uploaded_count": len(results), "details": results}
 
+# @app.get("/billing/{user_id}")
+# def calculate_bill(user_id: int, start: datetime, end: datetime, db: Session = Depends(get_db)):
+#     # Get all user's meters
+#     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
+#     if not meters:
+#         raise HTTPException(status_code=404, detail="No smart meters found for this user")
+#
+#     meter_ids = [m.id for m in meters]
+#
+#     # Get all readings in the date range
+#     readings = db.query(SmartMeterReading).filter(
+#         SmartMeterReading.meter_id.in_(meter_ids),
+#         SmartMeterReading.timestamp >= start,
+#         SmartMeterReading.timestamp <= end
+#     ).all()
+#
+#     if not readings:
+#         return {"user_id": user_id, "total_kwh": 0, "total_cost": 0}
+#
+#     total_kwh = 0
+#     total_cost = 0
+#
+#     for reading in readings:
+#         # Round timestamp to the hour to match pricing
+#         hour_timestamp = reading.timestamp.replace(minute=0, second=0, microsecond=0)
+#         rate = db.query(Pricing).filter(Pricing.date == hour_timestamp).first()
+#         price = rate.price_per_kwh if rate else 0  # fallback to 0 if no pricing set
+#
+#         total_kwh += reading.energy_kwh
+#         total_cost += reading.energy_kwh * price
+#
+#     return {
+#         "user_id": user_id,
+#         "start_date": start,
+#         "end_date": end,
+#         "total_kwh": round(total_kwh, 2),
+#         "total_cost": round(total_cost, 2)
+#     }
+
+
 @app.get("/billing/{user_id}")
-def calculate_bill(user_id: int, start: datetime, end: datetime, db: Session = Depends(get_db)):
+def calculate_bill(
+    user_id: int,
+    start: date,
+    end: date,
+    db: Session = Depends(get_db)
+):
     # Get all user's meters
     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
     if not meters:
@@ -697,26 +742,38 @@ def calculate_bill(user_id: int, start: datetime, end: datetime, db: Session = D
     ).all()
 
     if not readings:
-        return {"user_id": user_id, "total_kwh": 0, "total_cost": 0}
+        return {
+            "user_id": user_id,
+            "total_kwh": 0,
+            "total_cost": 0,
+            "co2_avoided_kg": 0
+        }
 
     total_kwh = 0
     total_cost = 0
 
     for reading in readings:
-        # Round timestamp to the hour to match pricing
-        hour_timestamp = reading.timestamp.replace(minute=0, second=0, microsecond=0)
-        rate = db.query(Pricing).filter(Pricing.date == hour_timestamp).first()
-        price = rate.price_per_kwh if rate else 0  # fallback to 0 if no pricing set
-
+        # Find the pricing for the exact hour of this reading
+        rate = db.query(Pricing).filter(
+            Pricing.date == reading.timestamp.replace(minute=0, second=0, microsecond=0)
+        ).first()
+        price = rate.price_per_kwh if rate else 0
         total_kwh += reading.energy_kwh
         total_cost += reading.energy_kwh * price
+
+    # --- CO₂ Offset Analytics ---
+    # Example: Assume grid emissions factor = 0.4 kg CO₂/kWh
+    # This can be replaced with your local factor or stored in a config/db table.
+    EMISSIONS_FACTOR_KG_PER_KWH = 0.4
+    co2_avoided_kg = round(total_kwh * EMISSIONS_FACTOR_KG_PER_KWH, 2)
 
     return {
         "user_id": user_id,
         "start_date": start,
         "end_date": end,
         "total_kwh": round(total_kwh, 2),
-        "total_cost": round(total_cost, 2)
+        "total_cost": round(total_cost, 2),
+        "co2_avoided_kg": co2_avoided_kg
     }
 
 
