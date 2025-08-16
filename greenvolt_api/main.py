@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, func
 from sqlalchemy.orm import Session, declarative_base, sessionmaker, relationship
@@ -7,6 +8,9 @@ from datetime import datetime, date, timedelta
 from typing import Optional
 from typing import List
 from collections import defaultdict
+from jose import JWTError, jwt
+
+
 
 
 
@@ -16,6 +20,16 @@ DATABASE_URL = "sqlite:///./greenvolt.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+# ---------------------------
+# JWT Settings (DEV only)
+# ---------------------------
+SECRET_KEY = "change-this-to-a-long-random-string"  # e.g. use os.urandom(32).hex()
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
 
 # ---------------------------
 # Database Models
@@ -162,6 +176,34 @@ class BulkPricingCreate(BaseModel):
 def read_root():
     return {"message": "Hello from GreenVolt API"}
 
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)) -> User:
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        sub = payload.get("sub")
+        if sub is None:
+            raise credentials_exception
+        user_id = int(sub)
+    except (JWTError, ValueError):
+        raise credentials_exception
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise credentials_exception
+    return user
+
+
 # ---------------------------
 # User Management - Read/Update/Delete
 # ---------------------------
@@ -228,7 +270,9 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/smartmeters/")
-def create_smart_meter(smart_meter: SmartMeterCreate, db: Session = Depends(get_db)):
+def create_smart_meter(smart_meter: SmartMeterCreate,
+                       db: Session = Depends(get_db),
+                       current_user: User = Depends(get_current_user)):
     user = db.query(User).filter(User.id == smart_meter.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -245,7 +289,9 @@ def create_smart_meter(smart_meter: SmartMeterCreate, db: Session = Depends(get_
     return {"id": new_meter.id, "serial_number": new_meter.serial_number, "location": new_meter.location}
 
 @app.get("/smartmeters/{user_id}")
-def get_user_smart_meters(user_id: int, db: Session = Depends(get_db)):
+def get_user_smart_meters(user_id: int,
+                          db: Session = Depends(get_db),
+                          current_user: User = Depends(get_current_user)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -255,7 +301,9 @@ def get_user_smart_meters(user_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/readings/")
-def create_reading(reading: ReadingCreate, db: Session = Depends(get_db)):
+def create_reading(reading: ReadingCreate,
+                   db: Session = Depends(get_db),
+                   current_user: User = Depends(get_current_user)):
     meter = db.query(SmartMeter).filter(SmartMeter.id == reading.meter_id).first()
     if not meter:
         raise HTTPException(status_code=404, detail="Smart meter not found")
@@ -279,7 +327,9 @@ def create_reading(reading: ReadingCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/readings/{meter_id}")
-def get_meter_readings(meter_id: int, db: Session = Depends(get_db)):
+def get_meter_readings(meter_id: int,
+                       db: Session = Depends(get_db),
+                       current_user: User = Depends(get_current_user)):
     meter = db.query(SmartMeter).filter(SmartMeter.id == meter_id).first()
     if not meter:
         raise HTTPException(status_code=404, detail="Smart meter not found")
@@ -308,7 +358,9 @@ def get_daily_energy(meter_id: int, db: Session = Depends(get_db)):
     }
 
 @app.get("/readings/{meter_id}/monthly")
-def get_monthly_energy(meter_id: int, db: Session = Depends(get_db)):
+def get_monthly_energy(meter_id: int,
+                       db: Session = Depends(get_db),
+                       current_user: User = Depends(get_current_user)):
     """Get total energy (kWh) for the current month."""
     meter = db.query(SmartMeter).filter(SmartMeter.id == meter_id).first()
     if not meter:
@@ -332,7 +384,9 @@ def get_monthly_energy(meter_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/pricing/")
-def set_pricing(pricing: PricingCreate, db: Session = Depends(get_db)):
+def set_pricing(pricing: PricingCreate,
+                db: Session = Depends(get_db),
+                current_user: User = Depends(get_current_user)):
     existing_rate = db.query(Pricing).filter(Pricing.date == pricing.date).first()
 
     if existing_rate:
@@ -349,7 +403,10 @@ def set_pricing(pricing: PricingCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/billing/{user_id}")
-def calculate_bill(user_id: int, start: date, end: date, db: Session = Depends(get_db)):
+def calculate_bill(user_id: int,
+                   start: date, end: date,
+                   db: Session = Depends(get_db),
+                   current_user: User = Depends(get_current_user)):
     # Get all user's meters
     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
     if not meters:
@@ -505,6 +562,21 @@ def get_ev_charging_sessions(user_id: int, db: Session = Depends(get_db)):
         }
         for s in sessions
     ]
+
+@app.post("/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """
+    OAuth2PasswordRequestForm expects form fields:
+      - username (we'll use this as email)
+      - password
+    """
+    user = db.query(User).filter(User.email == form_data.username).first()
+    if not user or user.password != form_data.password:  # DEV: plaintext check
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    access_token = create_access_token(data={"sub": str(user.id)})
+    return {"access_token": access_token, "token_type": "bearer"}
+
 
 
 
@@ -784,7 +856,8 @@ def calculate_bill_with_breakdown(
     user_id: int,
     start: date,
     end: date,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     # Get user's meters
     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
