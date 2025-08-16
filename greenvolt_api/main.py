@@ -221,9 +221,25 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
 
     return {"id": new_user.id, "name": new_user.name, "email": new_user.email}
 
+@app.post("/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """
+    OAuth2PasswordRequestForm expects form fields:
+      - username (we'll use this as email)
+      - password
+    """
+    user = db.query(User).filter(User.email == form_data.username).first()
+    if not user or user.password != form_data.password:  # DEV: plaintext check
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    access_token = create_access_token(data={"sub": str(user.id)})
+    return {"access_token": access_token, "token_type": "bearer"}
+
 
 @app.get("/users/{user_id}")
-def get_user(user_id: int, db: Session = Depends(get_db)):
+def get_user(user_id: int,
+             db: Session = Depends(get_db),
+             current_user: User = Depends(get_current_user)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -239,7 +255,9 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
 
 @app.put("/users/{user_id}")
-def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get_db)):
+def update_user(user_id: int, user_update: UserUpdate,
+                db: Session = Depends(get_db),
+                current_user: User = Depends(get_current_user)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -259,7 +277,9 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
     return {"message": "User updated", "user": {"id": user.id, "name": user.name, "email": user.email}}
 
 @app.delete("/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db)):
+def delete_user(user_id: int,
+                db: Session = Depends(get_db),
+                current_user: User = Depends(get_current_user)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -339,7 +359,9 @@ def get_meter_readings(meter_id: int,
 
 
 @app.get("/readings/{meter_id}/daily")
-def get_daily_energy(meter_id: int, db: Session = Depends(get_db)):
+def get_daily_energy(meter_id: int,
+                     db: Session = Depends(get_db),
+                     current_user: User = Depends(get_current_user)):
     """Get total energy (kWh) for today."""
     meter = db.query(SmartMeter).filter(SmartMeter.id == meter_id).first()
     if not meter:
@@ -487,7 +509,9 @@ def get_rate_for_hour(db: Session, dt: datetime) -> float:
 #     }
 
 @app.post("/ev-charging/")
-def create_ev_charging_session(session: EVChargingCreate, db: Session = Depends(get_db)):
+def create_ev_charging_session(session: EVChargingCreate,
+                               db: Session = Depends(get_db),
+                               current_user: User = Depends(get_current_user)):
     user = db.query(User).filter(User.id == session.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -546,7 +570,9 @@ def create_ev_charging_session(session: EVChargingCreate, db: Session = Depends(
 
 
 @app.get("/ev-charging/{user_id}")
-def get_ev_charging_sessions(user_id: int, db: Session = Depends(get_db)):
+def get_ev_charging_sessions(user_id: int,
+                             db: Session = Depends(get_db),
+                             current_user: User = Depends(get_current_user)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -563,26 +589,11 @@ def get_ev_charging_sessions(user_id: int, db: Session = Depends(get_db)):
         for s in sessions
     ]
 
-@app.post("/login")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """
-    OAuth2PasswordRequestForm expects form fields:
-      - username (we'll use this as email)
-      - password
-    """
-    user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or user.password != form_data.password:  # DEV: plaintext check
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    access_token = create_access_token(data={"sub": str(user.id)})
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
-
-
 
 @app.get("/ev-charging/{user_id}/monthly-summary")
-def get_monthly_ev_summary(user_id: int, db: Session = Depends(get_db)):
+def get_monthly_ev_summary(user_id: int,
+                           db: Session = Depends(get_db),
+                           current_user: User = Depends(get_current_user)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -672,7 +683,9 @@ def get_monthly_ev_summary(user_id: int, db: Session = Depends(get_db)):
 #     )
 
 @app.post("/smartmeters/data")
-def upload_smart_meter_data(data: SmartMeterDataCreate, db: Session = Depends(get_db)):
+def upload_smart_meter_data(data: SmartMeterDataCreate,
+                            db: Session = Depends(get_db),
+                            current_user: User = Depends(get_current_user)):
     # Check user exists
     user = db.query(User).filter(User.id == data.user_id).first()
     if not user:
@@ -697,7 +710,11 @@ def upload_smart_meter_data(data: SmartMeterDataCreate, db: Session = Depends(ge
 
 
 @app.get("/smartmeters/{user_id}/consumption")
-def get_smart_meter_consumption(user_id: int, start_date: str, end_date: str, db: Session = Depends(get_db)):
+def get_smart_meter_consumption(user_id: int,
+                                start_date: str,
+                                end_date: str,
+                                db: Session = Depends(get_db),
+                                current_user: User = Depends(get_current_user)):
     """
     Retrieve smart meter consumption data for a user within a date range.
     start_date and end_date format: YYYY-MM-DD
@@ -732,7 +749,9 @@ def get_smart_meter_consumption(user_id: int, start_date: str, end_date: str, db
     }
 
 @app.post("/pricing/bulk/")
-def bulk_pricing_upload(prices: List[BulkPricingCreate], db: Session = Depends(get_db)):
+def bulk_pricing_upload(prices: List[BulkPricingCreate],
+                        db: Session = Depends(get_db),
+                        current_user: User = Depends(get_current_user)):
     if not prices:
         raise HTTPException(status_code=400, detail="Empty pricing list")
 
@@ -925,7 +944,10 @@ def calculate_bill_with_breakdown(
 
 
 @app.get("/billing/{user_id}/detailed_hourly")
-def calculate_hourly_bill(user_id: int, start: date, end: date, db: Session = Depends(get_db)):
+def calculate_hourly_bill(user_id: int,
+                          start: date, end: date,
+                          db: Session = Depends(get_db),
+                          current_user: User = Depends(get_current_user)):
     # Get all user's meters
     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
     if not meters:
