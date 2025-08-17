@@ -127,6 +127,19 @@ class SmartMeterData(Base):
 
     user = relationship("User")
 
+class Consumption(Base):
+    __tablename__ = "consumptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    smart_meter_id = Column(Integer, ForeignKey("smartmeters.id"))
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    energy_kwh = Column(Float)
+
+    # Relationships
+    user = relationship("User", backref="consumptions")
+    smart_meter = relationship("SmartMeter", backref="consumptions")
+
 
 
 Base.metadata.create_all(bind=engine)
@@ -198,6 +211,24 @@ class SmartMeterDataCreate(BaseModel):
 class BulkPricingCreate(BaseModel):
     date: datetime  # The exact hour
     price_per_kwh: float
+
+
+class ConsumptionCreate(BaseModel):
+    user_id: int
+    smart_meter_id: int
+    timestamp: datetime
+    energy_kwh: float
+
+class ConsumptionOut(BaseModel):
+    id: int
+    user_id: int
+    smart_meter_id: int
+    timestamp: datetime
+    energy_kwh: float
+
+    class Config:
+        orm_mode = True
+
 
 # ---------------------------
 # Routes
@@ -1199,3 +1230,46 @@ def analytics_summary(
         # Optional: include the hourly profile if you want to chart it on the frontend
         "hourly_profile": [{"hour": h, "kwh": round(k, 3)} for h, k in enumerate(hourly_bins)]
     }
+
+
+@app.post("/consumptions/", response_model=ConsumptionOut)
+def create_consumption(consumption: ConsumptionCreate, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == consumption.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    meter = db.query(SmartMeter).filter(SmartMeter.id == consumption.smart_meter_id,
+                                        SmartMeter.user_id == consumption.user_id).first()
+    if not meter:
+        raise HTTPException(status_code=404, detail="Smart meter not found for this user")
+
+    new_consumption = Consumption(
+        user_id=consumption.user_id,
+        smart_meter_id=consumption.smart_meter_id,
+        timestamp=consumption.timestamp,
+        energy_kwh=consumption.energy_kwh
+    )
+    db.add(new_consumption)
+    db.commit()
+    db.refresh(new_consumption)
+    return new_consumption
+
+
+@app.get("/consumptions/{user_id}", response_model=List[ConsumptionOut])
+def get_consumption(
+    user_id: int,
+    start: datetime = Query(..., description="Start datetime (YYYY-MM-DDTHH:MM:SS)"),
+    end: datetime = Query(..., description="End datetime (YYYY-MM-DDTHH:MM:SS)"),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    records = db.query(Consumption).filter(
+        Consumption.user_id == user_id,
+        Consumption.timestamp >= start,
+        Consumption.timestamp <= end
+    ).all()
+
+    return records
