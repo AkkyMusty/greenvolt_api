@@ -219,6 +219,7 @@ class ConsumptionCreate(BaseModel):
     timestamp: datetime
     energy_kwh: float
 
+
 class ConsumptionOut(BaseModel):
     id: int
     user_id: int
@@ -228,6 +229,8 @@ class ConsumptionOut(BaseModel):
 
     class Config:
         orm_mode = True
+
+
 
 
 # ---------------------------
@@ -1273,3 +1276,28 @@ def get_consumption(
     ).all()
 
     return records
+
+
+@app.post("/consumptions/bulk/")
+def bulk_consumption_upload(consumptions: List[ConsumptionCreate], db: Session = Depends(get_db)):
+    if not consumptions:
+        raise HTTPException(status_code=400, detail="Empty consumption list")
+
+    results = []
+    for c in consumptions:
+        new_record = Consumption(
+            user_id=c.user_id,
+            smart_meter_id=c.smart_meter_id,
+            timestamp=c.timestamp,
+            energy_kwh=c.energy_kwh
+        )
+        db.add(new_record)
+        db.commit()
+        db.refresh(new_record)
+        results.append({
+            "id": new_record.id,
+            "timestamp": new_record.timestamp,
+            "energy_kwh": new_record.energy_kwh
+        })
+
+    return {"uploaded_count": len(results), "details": results}
