@@ -1,6 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends
-from main import SessionLocal, User
+from greenvolt_api.main import SessionLocal
 from sqlalchemy.orm import Session
+from greenvolt_api.schemas import UserCreate, UserUpdate
+from greenvolt_api.jwt import get_password_hash, oauth2_scheme, SECRET_KEY, ALGORITHM
+from jose import JWTError, jwt
+from greenvolt_api.models import User
 
 router = APIRouter()
 
@@ -12,13 +16,24 @@ def get_db():
     finally:
         db.close()
 
-@router.post("/")
-def create_user(name: str, email: str, password: str, db=Depends(get_db)):
-    user = User(name=name, email=email, password=password)
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=401, detail="Could not validate credentials"
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if user is None:
+        raise credentials_exception
     return user
+
 
 @router.post("/")
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
@@ -34,12 +49,6 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
 
     return {"id": new_user.id, "name": new_user.name, "email": new_user.email}
 
-@router.get("/{user_id}")
-def get_user(user_id: int, db=Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
 
 @router.get("/{user_id}")
 def get_user(user_id: int,
@@ -55,7 +64,7 @@ def get_user(user_id: int,
     }
 
 
-@app.put("/users/{user_id}")
+@router.put("/users/{user_id}")
 def update_user(user_id: int, user_update: UserUpdate,
                 db: Session = Depends(get_db),
                 current_user: User = Depends(get_current_user)):
@@ -77,7 +86,7 @@ def update_user(user_id: int, user_update: UserUpdate,
     db.refresh(user)
     return {"message": "User updated", "user": {"id": user.id, "name": user.name, "email": user.email}}
 
-@app.delete("/users/{user_id}")
+@router.delete("/users/{user_id}")
 def delete_user(user_id: int,
                 db: Session = Depends(get_db),
                 current_user: User = Depends(get_current_user)):
