@@ -1,6 +1,13 @@
-from fastapi import APIRouter, Depends
-from main import SessionLocal, EVChargingSession
-from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, date
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from greenvolt_api.database import SessionLocal
+from greenvolt_api.models import SmartMeter, SmartMeterReading, User
+from users import get_current_user
+from greenvolt_api.schemas import ReadingCreate
 
 router = APIRouter()
 
