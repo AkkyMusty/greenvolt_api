@@ -1,5 +1,6 @@
-from datetime import datetime, timedelta
-from main import SessionLocal, User, SmartMeter, Consumption, Pricing, EVChargingSession
+from datetime import datetime
+from database import SessionLocal
+from models import User, SmartMeter, Consumption, Pricing, EVChargingSession
 
 def seed():
     db = SessionLocal()

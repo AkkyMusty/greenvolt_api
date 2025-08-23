@@ -1,10 +1,16 @@
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
+from typing import Optional
 
 class UserCreate(BaseModel):
     name: str
     email: EmailStr
     password: str
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
 
 class SmartMeterCreate(BaseModel):
     serial_number: str
@@ -72,6 +78,5 @@ class ConsumptionOut(BaseModel):
 
     class Config:
         orm_mode = True
-
 
 
