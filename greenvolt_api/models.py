@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
-from database import Base
+from greenvolt_api.database import Base
 from datetime import datetime
 
 class User(Base):
@@ -71,10 +71,11 @@ class Consumption(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    smart_meter_id = Column(Integer, ForeignKey("smartmeters.id"))
+    smart_meter_id = Column(Integer, ForeignKey("smart_meters.id"))
     timestamp = Column(DateTime, default=datetime.utcnow)
     energy_kwh = Column(Float)
 
     # Relationships
     user = relationship("User", backref="consumptions")
     smart_meter = relationship("SmartMeter", backref="consumptions")
+

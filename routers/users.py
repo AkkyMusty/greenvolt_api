@@ -1,20 +1,13 @@
 from fastapi import APIRouter, HTTPException, Depends
-from greenvolt_api.main import SessionLocal
 from sqlalchemy.orm import Session
+
+from greenvolt_api.database import get_db
 from greenvolt_api.schemas import UserCreate, UserUpdate
 from greenvolt_api.jwt import get_password_hash, oauth2_scheme, SECRET_KEY, ALGORITHM
 from jose import JWTError, jwt
 from greenvolt_api.models import User
 
 router = APIRouter()
-
-# Dependency to get DB session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -33,6 +26,8 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user is None:
         raise credentials_exception
     return user
+
+
 
 
 @router.post("/")

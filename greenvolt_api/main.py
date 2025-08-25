@@ -1,67 +1,99 @@
-from fastapi import FastAPI, Depends, HTTPException, Query
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, func
-from sqlalchemy.orm import Session, declarative_base, sessionmaker, relationship
-from sqlalchemy import create_engine
-from datetime import datetime, date, timedelta
-from typing import Optional
-from typing import List
-from collections import defaultdict
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-
-from greenvolt_api.routers import smart_meters, consumption, pricing, ev_charging
-from routers import users
+from fastapi import FastAPI
+from greenvolt_api.database import Base, engine
+from routers import smart_meters, consumption, ev_charging, billing, users, login, analytics, pricing
 
 
-
-CO2_FACTOR = 0.475  # kg CO₂ per kWh avoided (example value, adjust if needed)
-
+Base.metadata.create_all(bind=engine)
 
 
+app = FastAPI(title="GreenVolt API 🌱⚡")
+print("MAIN.PY is being loaded")
 
-# Database setup
-DATABASE_URL = "sqlite:///./greenvolt.db"
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to GreenVolt API"}
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+app.include_router(users.router, prefix="/users", tags=["users"])
+app.include_router(login.router, prefix="/login", tags=["login"])
+app.include_router(smart_meters.router, prefix="/meters", tags=["smart meters"])
+app.include_router(consumption.router, prefix="/consumption", tags=["consumption"])
+app.include_router(pricing.router, prefix="/pricing", tags=["pricing"])
+app.include_router(ev_charging.router, prefix="/ev", tags=["EV sessions"])
+app.include_router(ev_charging.router, prefix="/readings", tags=["readings"])
+app.include_router(billing.router, prefix="/billing", tags=["billing"])
+app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
+
+
+
+
+# from fastapi import FastAPI, Depends, HTTPException, Query
+# from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+# from pydantic import BaseModel, EmailStr
+# from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, func
+# from sqlalchemy.orm import Session, declarative_base, sessionmaker, relationship
+# from sqlalchemy import create_engine
+# from datetime import datetime, date, timedelta
+# from typing import Optional
+# from typing import List
+# from collections import defaultdict
+# from jose import JWTError, jwt
+# from passlib.context import CryptContext
+
+
+
+
+
+
+
+
+
+
+# CO2_FACTOR = 0.475  # kg CO₂ per kWh avoided (example value, adjust if needed)
+
+
+
+
+# # Database setup
+# DATABASE_URL = "sqlite:///./greenvolt.db"
+#
+# engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Base = declarative_base()
 
 # ---------------------------
 # JWT Settings (DEV only)
 # ---------------------------
 # Secret key for signing JWT
-SECRET_KEY = "supersecretkey123"  # ⚠️ change in production
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+# SECRET_KEY = "supersecretkey123"  # ⚠️ change in production
+# ALGORITHM = "HS256"
+# ACCESS_TOKEN_EXPIRE_MINUTES = 60
+#
+# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+#
+# # Helper functions
+# def verify_password(plain_password, hashed_password):
+#     return pwd_context.verify(plain_password, hashed_password)
+#
+# def get_password_hash(password):
+#     return pwd_context.hash(password)
+#
+# def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+#     to_encode = data.copy()
+#     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
+#     to_encode.update({"exp": expire})
+#     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
-
-# Helper functions
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_password_hash(password):
-    return pwd_context.hash(password)
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-def load_pricing_map(db: Session, start: date, end: date) -> dict[datetime, float]:
-    """Return {hour_start_datetime -> price_per_kwh} for the date range."""
-    # widen to cover the whole last day
-    start_dt = datetime.combine(start, datetime.min.time())
-    end_dt   = datetime.combine(end,   datetime.max.time())
-    rates = db.query(Pricing).filter(
-        Pricing.date >= start_dt,
-        Pricing.date <= end_dt
-    ).all()
-    return {r.date.replace(minute=0, second=0, microsecond=0): r.price_per_kwh for r in rates}
+# def load_pricing_map(db: Session, start: date, end: date) -> dict[datetime, float]:
+#     """Return {hour_start_datetime -> price_per_kwh} for the date range."""
+#     # widen to cover the whole last day
+#     start_dt = datetime.combine(start, datetime.min.time())
+#     end_dt   = datetime.combine(end,   datetime.max.time())
+#     rates = db.query(Pricing).filter(
+#         Pricing.date >= start_dt,
+#         Pricing.date <= end_dt
+#     ).all()
+#     return {r.date.replace(minute=0, second=0, microsecond=0): r.price_per_kwh for r in rates}
 
 
 # ---------------------------
@@ -145,18 +177,14 @@ def load_pricing_map(db: Session, start: date, end: date) -> dict[datetime, floa
 #
 
 
-Base.metadata.create_all(bind=engine)
 
-app = FastAPI()
 
-print("MAIN.PY is being loaded")
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# def get_db():
+#     db = SessionLocal()
+#     try:
+#         yield db
+#     finally:
+#         db.close()
 
 # ---------------------------
 # Pydantic Models
@@ -242,43 +270,28 @@ def get_db():
 
 
 
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to GreenVolt API"}
+# def create_access_token(data: dict, expires_delta: timedelta | None = None):
+#     to_encode = data.copy()
+#     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+#     to_encode.update({"exp": expire})
+#     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-
- # add others when implemented
-
-app = FastAPI(title="GreenVolt")
-
-app.include_router(users.router, prefix="/users", tags=["users"])
-app.include_router(smart_meters.router, prefix="/meters", tags=["smart meters"])
-app.include_router(consumption.router, prefix="/consumption", tags=["consumption"])
-app.include_router(pricing.router, prefix="/pricing", tags=["pricing"])
-app.include_router(ev_charging.router, prefix="/ev", tags=["EV sessions"])
-app.include_router(ev_charging.router, prefix="/readings", tags=["readings"])
-def create_access_token(data: dict, expires_delta: timedelta | None = None):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=401, detail="Could not validate credentials"
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-
-    user = db.query(User).filter(User.id == int(user_id)).first()
-    if user is None:
-        raise credentials_exception
-    return user
+# def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+#     credentials_exception = HTTPException(
+#         status_code=401, detail="Could not validate credentials"
+#     )
+#     try:
+#         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+#         user_id: str = payload.get("sub")
+#         if user_id is None:
+#             raise credentials_exception
+#     except JWTError:
+#         raise credentials_exception
+#
+#     user = db.query(User).filter(User.id == int(user_id)).first()
+#     if user is None:
+#         raise credentials_exception
+#     return user
 
 # def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)) -> User:
 #     credentials_exception = HTTPException(
@@ -347,16 +360,16 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 #     access_token = create_access_token(data={"sub": str(user.id)})
 #     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.post("/login")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(data={"sub": str(user.id)}, expires_delta=access_token_expires)
-
-    return {"access_token": access_token, "token_type": "bearer"}
+# @app.post("/login")
+# def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+#     user = db.query(User).filter(User.email == form_data.username).first()
+#     if not user or not verify_password(form_data.password, user.password):
+#         raise HTTPException(status_code=401, detail="Invalid credentials")
+#
+#     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+#     access_token = create_access_token(data={"sub": str(user.id)}, expires_delta=access_token_expires)
+#
+#     return {"access_token": access_token, "token_type": "bearer"}
 
 #
 # @app.get("/users/{user_id}")
@@ -547,56 +560,56 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 #     return {"message": "Rate added", "id": new_rate.id, "price_per_kwh": new_rate.price_per_kwh}
 
 
-@app.get("/billing/{user_id}")
-def calculate_bill(user_id: int,
-                   start: date, end: date,
-                   db: Session = Depends(get_db),
-                   current_user: User = Depends(get_current_user)):
-    # Get all user's meters
-    if current_user.id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
-    if not meters:
-        raise HTTPException(status_code=404, detail="No smart meters found for this user")
+# @app.get("/billing/{user_id}")
+# def calculate_bill(user_id: int,
+#                    start: date, end: date,
+#                    db: Session = Depends(get_db),
+#                    current_user: User = Depends(get_current_user)):
+#     # Get all user's meters
+#     if current_user.id != user_id:
+#         raise HTTPException(status_code=403, detail="Not authorized")
+#     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
+#     if not meters:
+#         raise HTTPException(status_code=404, detail="No smart meters found for this user")
+#
+#     meter_ids = [m.id for m in meters]
+#
+#     # Get all readings in the date range
+#     readings = db.query(SmartMeterReading).filter(
+#         SmartMeterReading.meter_id.in_(meter_ids),
+#         SmartMeterReading.timestamp >= start,
+#         SmartMeterReading.timestamp <= end
+#     ).all()
+#
+#     if not readings:
+#         return {"user_id": user_id, "total_kwh": 0, "total_cost": 0}
+#
+#     total_kwh = 0
+#     total_cost = 0
+#
+#     for reading in readings:
+#         # Find the pricing for the exact hour of this reading
+#         rate = db.query(Pricing).filter(Pricing.date == reading.timestamp.replace(minute=0, second=0, microsecond=0)).first()
+#         price = rate.price_per_kwh if rate else 0
+#         total_kwh += reading.energy_kwh
+#         total_cost += reading.energy_kwh * price
+#
+#     return {
+#         "user_id": user_id,
+#         "start_date": start,
+#         "end_date": end,
+#         "total_kwh": total_kwh,
+#         "total_cost": total_cost
+#     }
 
-    meter_ids = [m.id for m in meters]
-
-    # Get all readings in the date range
-    readings = db.query(SmartMeterReading).filter(
-        SmartMeterReading.meter_id.in_(meter_ids),
-        SmartMeterReading.timestamp >= start,
-        SmartMeterReading.timestamp <= end
-    ).all()
-
-    if not readings:
-        return {"user_id": user_id, "total_kwh": 0, "total_cost": 0}
-
-    total_kwh = 0
-    total_cost = 0
-
-    for reading in readings:
-        # Find the pricing for the exact hour of this reading
-        rate = db.query(Pricing).filter(Pricing.date == reading.timestamp.replace(minute=0, second=0, microsecond=0)).first()
-        price = rate.price_per_kwh if rate else 0
-        total_kwh += reading.energy_kwh
-        total_cost += reading.energy_kwh * price
-
-    return {
-        "user_id": user_id,
-        "start_date": start,
-        "end_date": end,
-        "total_kwh": total_kwh,
-        "total_cost": total_cost
-    }
-
-def hour_floor(dt: datetime) -> datetime:
-    return dt.replace(minute=0, second=0, microsecond=0)
-
-def get_rate_for_hour(db: Session, dt: datetime) -> float:
-    """Return price for the hour starting at dt (floored to the hour). Missing rate -> 0."""
-    hour = hour_floor(dt)
-    rate = db.query(Pricing).filter(Pricing.date == hour).first()
-    return rate.price_per_kwh if rate else 0.0
+# def hour_floor(dt: datetime) -> datetime:
+#     return dt.replace(minute=0, second=0, microsecond=0)
+#
+# def get_rate_for_hour(db: Session, dt: datetime) -> float:
+#     """Return price for the hour starting at dt (floored to the hour). Missing rate -> 0."""
+#     hour = hour_floor(dt)
+#     rate = db.query(Pricing).filter(Pricing.date == hour).first()
+#     return rate.price_per_kwh if rate else 0.0
 
 
 # ---------------------------
@@ -807,95 +820,95 @@ def get_rate_for_hour(db: Session, dt: datetime) -> float:
 #         items=items
 #     )
 
-@app.post("/smartmeters/data")
-def upload_smart_meter_data(data: SmartMeterDataCreate,
-                            db: Session = Depends(get_db),
-                            current_user: User = Depends(get_current_user)):
-    # Check user exists
-    user = db.query(User).filter(User.id == data.user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+# @app.post("/smartmeters/data")
+# def upload_smart_meter_data(data: SmartMeterDataCreate,
+#                             db: Session = Depends(get_db),
+#                             current_user: User = Depends(get_current_user)):
+#     # Check user exists
+#     user = db.query(User).filter(User.id == data.user_id).first()
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#
+#     # Create new record
+#     new_record = SmartMeterData(
+#         user_id=data.user_id,
+#         timestamp=data.timestamp,
+#         consumption_kwh=data.consumption_kwh
+#     )
+#     db.add(new_record)
+#     db.commit()
+#     db.refresh(new_record)
+#
+#     return {
+#         "id": new_record.id,
+#         "user_id": new_record.user_id,
+#         "timestamp": new_record.timestamp,
+#         "consumption_kwh": new_record.consumption_kwh
+#     }
+#
+#
+# @app.get("/smartmeters/{user_id}/consumption")
+# def get_smart_meter_consumption(user_id: int,
+#                                 start_date: str,
+#                                 end_date: str,
+#                                 db: Session = Depends(get_db),
+#                                 current_user: User = Depends(get_current_user)):
+#     """
+#     Retrieve smart meter consumption data for a user within a date range.
+#     start_date and end_date format: YYYY-MM-DD
+#     """
+#     # Validate dates
+#     try:
+#         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+#         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+#     except ValueError:
+#         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+#
+#     # Check user exists
+#     user = db.query(User).filter(User.id == user_id).first()
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#
+#     # Fetch data
+#     records = db.query(SmartMeterData).filter(
+#         SmartMeterData.user_id == user_id,
+#         SmartMeterData.timestamp >= start_dt,
+#         SmartMeterData.timestamp <= end_dt
+#     ).all()
+#
+#     return {
+#         "user_id": user_id,
+#         "start_date": start_date,
+#         "end_date": end_date,
+#         "records": [
+#             {"timestamp": r.timestamp, "consumption_kwh": r.consumption_kwh}
+#             for r in records
+#         ]
+#     }
 
-    # Create new record
-    new_record = SmartMeterData(
-        user_id=data.user_id,
-        timestamp=data.timestamp,
-        consumption_kwh=data.consumption_kwh
-    )
-    db.add(new_record)
-    db.commit()
-    db.refresh(new_record)
-
-    return {
-        "id": new_record.id,
-        "user_id": new_record.user_id,
-        "timestamp": new_record.timestamp,
-        "consumption_kwh": new_record.consumption_kwh
-    }
-
-
-@app.get("/smartmeters/{user_id}/consumption")
-def get_smart_meter_consumption(user_id: int,
-                                start_date: str,
-                                end_date: str,
-                                db: Session = Depends(get_db),
-                                current_user: User = Depends(get_current_user)):
-    """
-    Retrieve smart meter consumption data for a user within a date range.
-    start_date and end_date format: YYYY-MM-DD
-    """
-    # Validate dates
-    try:
-        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
-
-    # Check user exists
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Fetch data
-    records = db.query(SmartMeterData).filter(
-        SmartMeterData.user_id == user_id,
-        SmartMeterData.timestamp >= start_dt,
-        SmartMeterData.timestamp <= end_dt
-    ).all()
-
-    return {
-        "user_id": user_id,
-        "start_date": start_date,
-        "end_date": end_date,
-        "records": [
-            {"timestamp": r.timestamp, "consumption_kwh": r.consumption_kwh}
-            for r in records
-        ]
-    }
-
-@app.post("/pricing/bulk/")
-def bulk_pricing_upload(prices: List[BulkPricingCreate],
-                        db: Session = Depends(get_db),
-                        current_user: User = Depends(get_current_user)):
-    if not prices:
-        raise HTTPException(status_code=400, detail="Empty pricing list")
-
-    results = []
-    for p in prices:
-        existing = db.query(Pricing).filter(Pricing.date == p.date).first()
-        if existing:
-            existing.price_per_kwh = p.price_per_kwh
-            db.commit()
-            db.refresh(existing)
-            results.append({"id": existing.id, "date": existing.date, "price_per_kwh": existing.price_per_kwh, "status": "updated"})
-        else:
-            new_rate = Pricing(date=p.date, price_per_kwh=p.price_per_kwh)
-            db.add(new_rate)
-            db.commit()
-            db.refresh(new_rate)
-            results.append({"id": new_rate.id, "date": new_rate.date, "price_per_kwh": new_rate.price_per_kwh, "status": "added"})
-
-    return {"uploaded_count": len(results), "details": results}
+# @app.post("/pricing/bulk/")
+# def bulk_pricing_upload(prices: List[BulkPricingCreate],
+#                         db: Session = Depends(get_db),
+#                         current_user: User = Depends(get_current_user)):
+#     if not prices:
+#         raise HTTPException(status_code=400, detail="Empty pricing list")
+#
+#     results = []
+#     for p in prices:
+#         existing = db.query(Pricing).filter(Pricing.date == p.date).first()
+#         if existing:
+#             existing.price_per_kwh = p.price_per_kwh
+#             db.commit()
+#             db.refresh(existing)
+#             results.append({"id": existing.id, "date": existing.date, "price_per_kwh": existing.price_per_kwh, "status": "updated"})
+#         else:
+#             new_rate = Pricing(date=p.date, price_per_kwh=p.price_per_kwh)
+#             db.add(new_rate)
+#             db.commit()
+#             db.refresh(new_rate)
+#             results.append({"id": new_rate.id, "date": new_rate.date, "price_per_kwh": new_rate.price_per_kwh, "status": "added"})
+#
+#     return {"uploaded_count": len(results), "details": results}
 
 # @app.get("/billing/{user_id}")
 # def calculate_bill(user_id: int, start: datetime, end: datetime, db: Session = Depends(get_db)):
@@ -995,144 +1008,144 @@ def bulk_pricing_upload(prices: List[BulkPricingCreate],
 
 
 
-@app.get("/billing/{user_id}")
-def calculate_bill_with_breakdown(
-    user_id: int,
-    start: date,
-    end: date,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    # Get user's meters
-    meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
-    if not meters:
-        raise HTTPException(status_code=404, detail="No smart meters found for this user")
-
-    meter_ids = [m.id for m in meters]
-
-    # Get readings in date range
-    readings = db.query(SmartMeterReading).filter(
-        SmartMeterReading.meter_id.in_(meter_ids),
-        SmartMeterReading.timestamp >= start,
-        SmartMeterReading.timestamp <= end
-    ).all()
-
-    if not readings:
-        return {
-            "user_id": user_id,
-            "total_kwh": 0,
-            "total_cost": 0,
-            "co2_avoided_kg": 0,
-            "daily_breakdown": []
-        }
-
-    total_kwh = 0
-    total_cost = 0
-    daily_data = defaultdict(lambda: {"kwh": 0, "cost": 0})
-
-    EMISSIONS_FACTOR_KG_PER_KWH = 0.4
-
-    for reading in readings:
-        # Round timestamp to hour for matching pricing
-        rate = db.query(Pricing).filter(
-            Pricing.date == reading.timestamp.replace(minute=0, second=0, microsecond=0)
-        ).first()
-        price = rate.price_per_kwh if rate else 0
-
-        day = reading.timestamp.date()
-        daily_data[day]["kwh"] += reading.energy_kwh
-        daily_data[day]["cost"] += reading.energy_kwh * price
-
-        total_kwh += reading.energy_kwh
-        total_cost += reading.energy_kwh * price
-
-    daily_breakdown = [
-        {
-            "date": day.isoformat(),
-            "kwh": round(data["kwh"], 2),
-            "cost": round(data["cost"], 2),
-            "co2_avoided_kg": round(data["kwh"] * EMISSIONS_FACTOR_KG_PER_KWH, 2)
-        }
-        for day, data in sorted(daily_data.items())
-    ]
-
-    return {
-        "user_id": user_id,
-        "start_date": start,
-        "end_date": end,
-        "total_kwh": round(total_kwh, 2),
-        "total_cost": round(total_cost, 2),
-        "co2_avoided_kg": round(total_kwh * EMISSIONS_FACTOR_KG_PER_KWH, 2),
-        "daily_breakdown": daily_breakdown
-    }
-
-
-
-@app.get("/billing/{user_id}/detailed_hourly")
-def calculate_hourly_bill(user_id: int,
-                          start: date, end: date,
-                          db: Session = Depends(get_db),
-                          current_user: User = Depends(get_current_user)):
-    # Get all user's meters
-    meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
-    if not meters:
-        raise HTTPException(status_code=404, detail="No smart meters found for this user")
-
-    meter_ids = [m.id for m in meters]
-
-    # Get all readings in the date range
-    readings = db.query(SmartMeterReading).filter(
-        SmartMeterReading.meter_id.in_(meter_ids),
-        SmartMeterReading.timestamp >= start,
-        SmartMeterReading.timestamp <= end
-    ).all()
-
-    if not readings:
-        return {"user_id": user_id, "total_kwh": 0, "total_cost": 0, "daily_breakdown": [], "hourly_breakdown": []}
-
-    daily_breakdown = {}
-    hourly_breakdown = []
-    total_kwh = 0
-    total_cost = 0
-
-    for reading in readings:
-        # Hourly cost
-        rate = db.query(Pricing).filter(
-            Pricing.date == reading.timestamp.replace(minute=0, second=0, microsecond=0)
-        ).first()
-        price = rate.price_per_kwh if rate else 0
-        cost = reading.energy_kwh * price
-
-        total_kwh += reading.energy_kwh
-        total_cost += cost
-
-        # Daily aggregation
-        day_str = reading.timestamp.date().isoformat()
-        if day_str not in daily_breakdown:
-            daily_breakdown[day_str] = {"kwh": 0, "cost": 0}
-        daily_breakdown[day_str]["kwh"] += reading.energy_kwh
-        daily_breakdown[day_str]["cost"] += cost
-
-        # Hourly entry
-        hourly_breakdown.append({
-            "timestamp": reading.timestamp.isoformat(),
-            "kwh": reading.energy_kwh,
-            "cost": round(cost, 2)
-        })
-
-    # Convert daily breakdown to a sorted list
-    daily_breakdown_list = [{"date": k, "kwh": v["kwh"], "cost": round(v["cost"], 2)}
-                            for k, v in sorted(daily_breakdown.items())]
-
-    return {
-        "user_id": user_id,
-        "start_date": start,
-        "end_date": end,
-        "total_kwh": total_kwh,
-        "total_cost": round(total_cost, 2),
-        "daily_breakdown": daily_breakdown_list,
-        "hourly_breakdown": hourly_breakdown
-    }
+# @app.get("/billing/{user_id}")
+# def calculate_bill_with_breakdown(
+#     user_id: int,
+#     start: date,
+#     end: date,
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_user)
+# ):
+#     # Get user's meters
+#     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
+#     if not meters:
+#         raise HTTPException(status_code=404, detail="No smart meters found for this user")
+#
+#     meter_ids = [m.id for m in meters]
+#
+#     # Get readings in date range
+#     readings = db.query(SmartMeterReading).filter(
+#         SmartMeterReading.meter_id.in_(meter_ids),
+#         SmartMeterReading.timestamp >= start,
+#         SmartMeterReading.timestamp <= end
+#     ).all()
+#
+#     if not readings:
+#         return {
+#             "user_id": user_id,
+#             "total_kwh": 0,
+#             "total_cost": 0,
+#             "co2_avoided_kg": 0,
+#             "daily_breakdown": []
+#         }
+#
+#     total_kwh = 0
+#     total_cost = 0
+#     daily_data = defaultdict(lambda: {"kwh": 0, "cost": 0})
+#
+#     EMISSIONS_FACTOR_KG_PER_KWH = 0.4
+#
+#     for reading in readings:
+#         # Round timestamp to hour for matching pricing
+#         rate = db.query(Pricing).filter(
+#             Pricing.date == reading.timestamp.replace(minute=0, second=0, microsecond=0)
+#         ).first()
+#         price = rate.price_per_kwh if rate else 0
+#
+#         day = reading.timestamp.date()
+#         daily_data[day]["kwh"] += reading.energy_kwh
+#         daily_data[day]["cost"] += reading.energy_kwh * price
+#
+#         total_kwh += reading.energy_kwh
+#         total_cost += reading.energy_kwh * price
+#
+#     daily_breakdown = [
+#         {
+#             "date": day.isoformat(),
+#             "kwh": round(data["kwh"], 2),
+#             "cost": round(data["cost"], 2),
+#             "co2_avoided_kg": round(data["kwh"] * EMISSIONS_FACTOR_KG_PER_KWH, 2)
+#         }
+#         for day, data in sorted(daily_data.items())
+#     ]
+#
+#     return {
+#         "user_id": user_id,
+#         "start_date": start,
+#         "end_date": end,
+#         "total_kwh": round(total_kwh, 2),
+#         "total_cost": round(total_cost, 2),
+#         "co2_avoided_kg": round(total_kwh * EMISSIONS_FACTOR_KG_PER_KWH, 2),
+#         "daily_breakdown": daily_breakdown
+#     }
+#
+#
+#
+# @app.get("/billing/{user_id}/detailed_hourly")
+# def calculate_hourly_bill(user_id: int,
+#                           start: date, end: date,
+#                           db: Session = Depends(get_db),
+#                           current_user: User = Depends(get_current_user)):
+#     # Get all user's meters
+#     meters = db.query(SmartMeter).filter(SmartMeter.user_id == user_id).all()
+#     if not meters:
+#         raise HTTPException(status_code=404, detail="No smart meters found for this user")
+#
+#     meter_ids = [m.id for m in meters]
+#
+#     # Get all readings in the date range
+#     readings = db.query(SmartMeterReading).filter(
+#         SmartMeterReading.meter_id.in_(meter_ids),
+#         SmartMeterReading.timestamp >= start,
+#         SmartMeterReading.timestamp <= end
+#     ).all()
+#
+#     if not readings:
+#         return {"user_id": user_id, "total_kwh": 0, "total_cost": 0, "daily_breakdown": [], "hourly_breakdown": []}
+#
+#     daily_breakdown = {}
+#     hourly_breakdown = []
+#     total_kwh = 0
+#     total_cost = 0
+#
+#     for reading in readings:
+#         # Hourly cost
+#         rate = db.query(Pricing).filter(
+#             Pricing.date == reading.timestamp.replace(minute=0, second=0, microsecond=0)
+#         ).first()
+#         price = rate.price_per_kwh if rate else 0
+#         cost = reading.energy_kwh * price
+#
+#         total_kwh += reading.energy_kwh
+#         total_cost += cost
+#
+#         # Daily aggregation
+#         day_str = reading.timestamp.date().isoformat()
+#         if day_str not in daily_breakdown:
+#             daily_breakdown[day_str] = {"kwh": 0, "cost": 0}
+#         daily_breakdown[day_str]["kwh"] += reading.energy_kwh
+#         daily_breakdown[day_str]["cost"] += cost
+#
+#         # Hourly entry
+#         hourly_breakdown.append({
+#             "timestamp": reading.timestamp.isoformat(),
+#             "kwh": reading.energy_kwh,
+#             "cost": round(cost, 2)
+#         })
+#
+#     # Convert daily breakdown to a sorted list
+#     daily_breakdown_list = [{"date": k, "kwh": v["kwh"], "cost": round(v["cost"], 2)}
+#                             for k, v in sorted(daily_breakdown.items())]
+#
+#     return {
+#         "user_id": user_id,
+#         "start_date": start,
+#         "end_date": end,
+#         "total_kwh": total_kwh,
+#         "total_cost": round(total_cost, 2),
+#         "daily_breakdown": daily_breakdown_list,
+#         "hourly_breakdown": hourly_breakdown
+#     }
 
 # @app.get("/analytics/{user_id}")
 # def get_user_analytics(user_id: int, start: date, end: date, db: Session = Depends(get_db)):
@@ -1169,151 +1182,151 @@ def calculate_hourly_bill(user_id: int,
 #         "co2_offset_kg": co2_offset
 #     }
 
-@app.get("/analytics/{user_id}")
-def analytics_summary(
-    user_id: int,
-    start: date,
-    end: date,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if current_user.id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    meter_ids = [m.id for m in user.smart_meters]
-    # No meters? Return zeros but still show the period.
-    if not meter_ids:
-        return {
-            "user_id": user_id,
-            "start_date": start,
-            "end_date": end,
-            "household_kwh": 0.0,
-            "ev_kwh": 0.0,
-            "total_kwh": 0.0,
-            "total_cost": 0.0,
-            "average_daily_kwh": 0.0,
-            "peak_usage_hour": None,
-            "co2_offset_kg": 0.0
-        }
-
-    # Readings in range
-    readings = db.query(SmartMeterReading).filter(
-        SmartMeterReading.meter_id.in_(meter_ids),
-        SmartMeterReading.timestamp >= datetime.combine(start, datetime.min.time()),
-        SmartMeterReading.timestamp <= datetime.combine(end,   datetime.max.time())
-    ).all()
-
-    # EV kWh in range (simple inclusion by start_time)
-    ev_kwh = db.query(func.sum(EVChargingSession.energy_kwh)).filter(
-        EVChargingSession.user_id == user_id,
-        EVChargingSession.start_time >= datetime.combine(start, datetime.min.time()),
-        EVChargingSession.start_time <= datetime.combine(end,   datetime.max.time())
-    ).scalar() or 0.0
-
-    # Pricing map for cost calc
-    pricing_map = load_pricing_map(db, start, end)
-
-    total_kwh = 0.0
-    total_cost = 0.0
-    hourly_bins = [0.0] * 24  # accumulate household kWh by hour-of-day
-
-    for r in readings:
-        hour_ts = r.timestamp.replace(minute=0, second=0, microsecond=0)
-        price = pricing_map.get(hour_ts, 0.0)
-        total_kwh += r.energy_kwh
-        total_cost += r.energy_kwh * price
-        hourly_bins[r.timestamp.hour] += r.energy_kwh
-
-    total_kwh_combined = total_kwh + ev_kwh
-
-    # Averages & peak
-    num_days = (end - start).days + 1
-    avg_daily = round(total_kwh_combined / num_days, 2) if num_days > 0 else 0.0
-    peak_hour = int(max(range(24), key=lambda h: hourly_bins[h])) if any(hourly_bins) else None
-
-    return {
-        "user_id": user_id,
-        "start_date": start,
-        "end_date": end,
-        "household_kwh": round(total_kwh, 2),
-        "ev_kwh": round(ev_kwh, 2),
-        "total_kwh": round(total_kwh_combined, 2),
-        "total_cost": round(total_cost, 2),
-        "average_daily_kwh": avg_daily,
-        "peak_usage_hour": peak_hour,
-        "co2_offset_kg": round(total_kwh_combined * CO2_FACTOR, 2),
-        # Optional: include the hourly profile if you want to chart it on the frontend
-        "hourly_profile": [{"hour": h, "kwh": round(k, 3)} for h, k in enumerate(hourly_bins)]
-    }
-
-
-@app.post("/consumptions/", response_model=ConsumptionOut)
-def create_consumption(consumption: ConsumptionCreate, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == consumption.user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    meter = db.query(SmartMeter).filter(SmartMeter.id == consumption.smart_meter_id,
-                                        SmartMeter.user_id == consumption.user_id).first()
-    if not meter:
-        raise HTTPException(status_code=404, detail="Smart meter not found for this user")
-
-    new_consumption = Consumption(
-        user_id=consumption.user_id,
-        smart_meter_id=consumption.smart_meter_id,
-        timestamp=consumption.timestamp,
-        energy_kwh=consumption.energy_kwh
-    )
-    db.add(new_consumption)
-    db.commit()
-    db.refresh(new_consumption)
-    return new_consumption
+# @app.get("/analytics/{user_id}")
+# def analytics_summary(
+#     user_id: int,
+#     start: date,
+#     end: date,
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_user)
+# ):
+#     if current_user.id != user_id:
+#         raise HTTPException(status_code=403, detail="Not authorized")
+#
+#     user = db.query(User).filter(User.id == user_id).first()
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#
+#     meter_ids = [m.id for m in user.smart_meters]
+#     # No meters? Return zeros but still show the period.
+#     if not meter_ids:
+#         return {
+#             "user_id": user_id,
+#             "start_date": start,
+#             "end_date": end,
+#             "household_kwh": 0.0,
+#             "ev_kwh": 0.0,
+#             "total_kwh": 0.0,
+#             "total_cost": 0.0,
+#             "average_daily_kwh": 0.0,
+#             "peak_usage_hour": None,
+#             "co2_offset_kg": 0.0
+#         }
+#
+#     # Readings in range
+#     readings = db.query(SmartMeterReading).filter(
+#         SmartMeterReading.meter_id.in_(meter_ids),
+#         SmartMeterReading.timestamp >= datetime.combine(start, datetime.min.time()),
+#         SmartMeterReading.timestamp <= datetime.combine(end,   datetime.max.time())
+#     ).all()
+#
+#     # EV kWh in range (simple inclusion by start_time)
+#     ev_kwh = db.query(func.sum(EVChargingSession.energy_kwh)).filter(
+#         EVChargingSession.user_id == user_id,
+#         EVChargingSession.start_time >= datetime.combine(start, datetime.min.time()),
+#         EVChargingSession.start_time <= datetime.combine(end,   datetime.max.time())
+#     ).scalar() or 0.0
+#
+#     # Pricing map for cost calc
+#     pricing_map = load_pricing_map(db, start, end)
+#
+#     total_kwh = 0.0
+#     total_cost = 0.0
+#     hourly_bins = [0.0] * 24  # accumulate household kWh by hour-of-day
+#
+#     for r in readings:
+#         hour_ts = r.timestamp.replace(minute=0, second=0, microsecond=0)
+#         price = pricing_map.get(hour_ts, 0.0)
+#         total_kwh += r.energy_kwh
+#         total_cost += r.energy_kwh * price
+#         hourly_bins[r.timestamp.hour] += r.energy_kwh
+#
+#     total_kwh_combined = total_kwh + ev_kwh
+#
+#     # Averages & peak
+#     num_days = (end - start).days + 1
+#     avg_daily = round(total_kwh_combined / num_days, 2) if num_days > 0 else 0.0
+#     peak_hour = int(max(range(24), key=lambda h: hourly_bins[h])) if any(hourly_bins) else None
+#
+#     return {
+#         "user_id": user_id,
+#         "start_date": start,
+#         "end_date": end,
+#         "household_kwh": round(total_kwh, 2),
+#         "ev_kwh": round(ev_kwh, 2),
+#         "total_kwh": round(total_kwh_combined, 2),
+#         "total_cost": round(total_cost, 2),
+#         "average_daily_kwh": avg_daily,
+#         "peak_usage_hour": peak_hour,
+#         "co2_offset_kg": round(total_kwh_combined * CO2_FACTOR, 2),
+#         # Optional: include the hourly profile if you want to chart it on the frontend
+#         "hourly_profile": [{"hour": h, "kwh": round(k, 3)} for h, k in enumerate(hourly_bins)]
+#     }
 
 
-@app.get("/consumptions/{user_id}", response_model=List[ConsumptionOut])
-def get_consumption(
-    user_id: int,
-    start: datetime = Query(..., description="Start datetime (YYYY-MM-DDTHH:MM:SS)"),
-    end: datetime = Query(..., description="End datetime (YYYY-MM-DDTHH:MM:SS)"),
-    db: Session = Depends(get_db)
-):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    records = db.query(Consumption).filter(
-        Consumption.user_id == user_id,
-        Consumption.timestamp >= start,
-        Consumption.timestamp <= end
-    ).all()
-
-    return records
-
-
-@app.post("/consumptions/bulk/")
-def bulk_consumption_upload(consumptions: List[ConsumptionCreate], db: Session = Depends(get_db)):
-    if not consumptions:
-        raise HTTPException(status_code=400, detail="Empty consumption list")
-
-    results = []
-    for c in consumptions:
-        new_record = Consumption(
-            user_id=c.user_id,
-            smart_meter_id=c.smart_meter_id,
-            timestamp=c.timestamp,
-            energy_kwh=c.energy_kwh
-        )
-        db.add(new_record)
-        db.commit()
-        db.refresh(new_record)
-        results.append({
-            "id": new_record.id,
-            "timestamp": new_record.timestamp,
-            "energy_kwh": new_record.energy_kwh
-        })
-
-    return {"uploaded_count": len(results), "details": results}
+# @app.post("/consumptions/", response_model=ConsumptionOut)
+# def create_consumption(consumption: ConsumptionCreate, db: Session = Depends(get_db)):
+#     user = db.query(User).filter(User.id == consumption.user_id).first()
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#
+#     meter = db.query(SmartMeter).filter(SmartMeter.id == consumption.smart_meter_id,
+#                                         SmartMeter.user_id == consumption.user_id).first()
+#     if not meter:
+#         raise HTTPException(status_code=404, detail="Smart meter not found for this user")
+#
+#     new_consumption = Consumption(
+#         user_id=consumption.user_id,
+#         smart_meter_id=consumption.smart_meter_id,
+#         timestamp=consumption.timestamp,
+#         energy_kwh=consumption.energy_kwh
+#     )
+#     db.add(new_consumption)
+#     db.commit()
+#     db.refresh(new_consumption)
+#     return new_consumption
+#
+#
+# @app.get("/consumptions/{user_id}", response_model=List[ConsumptionOut])
+# def get_consumption(
+#     user_id: int,
+#     start: datetime = Query(..., description="Start datetime (YYYY-MM-DDTHH:MM:SS)"),
+#     end: datetime = Query(..., description="End datetime (YYYY-MM-DDTHH:MM:SS)"),
+#     db: Session = Depends(get_db)
+# ):
+#     user = db.query(User).filter(User.id == user_id).first()
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#
+#     records = db.query(Consumption).filter(
+#         Consumption.user_id == user_id,
+#         Consumption.timestamp >= start,
+#         Consumption.timestamp <= end
+#     ).all()
+#
+#     return records
+#
+#
+# @app.post("/consumptions/bulk/")
+# def bulk_consumption_upload(consumptions: List[ConsumptionCreate], db: Session = Depends(get_db)):
+#     if not consumptions:
+#         raise HTTPException(status_code=400, detail="Empty consumption list")
+#
+#     results = []
+#     for c in consumptions:
+#         new_record = Consumption(
+#             user_id=c.user_id,
+#             smart_meter_id=c.smart_meter_id,
+#             timestamp=c.timestamp,
+#             energy_kwh=c.energy_kwh
+#         )
+#         db.add(new_record)
+#         db.commit()
+#         db.refresh(new_record)
+#         results.append({
+#             "id": new_record.id,
+#             "timestamp": new_record.timestamp,
+#             "energy_kwh": new_record.energy_kwh
+#         })
+#
+#     return {"uploaded_count": len(results), "details": results}

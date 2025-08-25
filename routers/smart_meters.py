@@ -1,20 +1,15 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from greenvolt_api.main import SessionLocal
+
+from greenvolt_api.database import get_db
 from greenvolt_api.models import SmartMeter, User, SmartMeterData
 from greenvolt_api.schemas import SmartMeterCreate, SmartMeterDataCreate
-from users import get_current_user
+from routers.users import get_current_user
 from sqlalchemy.orm import Session
 
 router = APIRouter()
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.post("/")
 def create_smart_meter(smart_meter: SmartMeterCreate,

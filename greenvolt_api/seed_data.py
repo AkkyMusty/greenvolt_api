@@ -1,6 +1,6 @@
 from datetime import datetime
-from database import SessionLocal
-from models import User, SmartMeter, Consumption, Pricing, EVChargingSession
+from greenvolt_api.database import SessionLocal
+from greenvolt_api.models import User, SmartMeter, Consumption, Pricing, EVChargingSession
 
 def seed():
     db = SessionLocal()

@@ -2,18 +2,12 @@ from datetime import datetime, timedelta, date
 from greenvolt_api.schemas import EVChargingCreate
 from sqlalchemy.orm import Session
 from greenvolt_api.models import User, Pricing, EVChargingSession
-from greenvolt_api.database import SessionLocal
-from users import get_current_user
+from greenvolt_api.database import get_db
+from routers.users import get_current_user
 from fastapi import APIRouter, Depends, HTTPException
 
 router = APIRouter()
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 def hour_floor(dt: datetime) -> datetime:
     return dt.replace(minute=0, second=0, microsecond=0)

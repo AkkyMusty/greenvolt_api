@@ -4,19 +4,12 @@ from datetime import datetime, date
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from greenvolt_api.database import SessionLocal
+from greenvolt_api.database import get_db
 from greenvolt_api.models import SmartMeter, SmartMeterReading, User
-from users import get_current_user
+from routers.users import get_current_user
 from greenvolt_api.schemas import ReadingCreate
 
 router = APIRouter()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.post("/")
 def create_reading(reading: ReadingCreate,

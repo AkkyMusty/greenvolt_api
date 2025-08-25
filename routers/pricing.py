@@ -1,19 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from greenvolt_api.schemas import BulkPricingCreate
-from users import get_current_user
+from routers.users import get_current_user
 from sqlalchemy.orm import Session
-from greenvolt_api.database import SessionLocal
+from greenvolt_api.database import get_db
 from greenvolt_api.models import Pricing, User
 from typing import List
 
 router = APIRouter()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.post("/bulk/")
